@@ -75,7 +75,7 @@ input:focus{border-color:#d8342c}
   <div class="title"><small>フレブルこまちのお散歩</small>ぷりぷり<br>さんぽ</div>
   <div style="width:100%;display:flex;flex-direction:column;align-items:center;gap:calc(var(--u)*2)">
     <div class="panel compact">
-      <h2>スコアボード</h2>
+      <h2 id="boardTitle">スコアボード</h2>
       <ol class="board" id="board"></ol>
     </div>
     <div class="who"><span id="whoName"></span><button class="link" id="changeName">なまえを変える</button></div>
@@ -267,7 +267,7 @@ while(x<92){const w=6+((i*37)%7),h=12+((i*53)%20);g.fillStyle=cols[i%4];g.fillRe
 g.fillStyle='#8fbf6a';for(let x=0;x<90;x++){const h=2+Math.round(1.5+1.5*Math.sin(x*.9)+Math.sin(x*.31));g.fillRect(x,50-h,1,h)}}
 
 const LEN={kid:.08,car:.14,granny:.08,puddle:.12,jogger:.08,dog:.1,ducks:.08,sign:.08,truck:.18,branch:.08,cone:.07};
-const JUMPABLE={puddle:1,sign:1,ducks:1,branch:1,cone:1,mud:1};const FLAT={puddle:1,branch:1};
+const JUMPABLE={puddle:1,sign:1,ducks:1,branch:1,cone:1,mud:1,kid:1};const FLAT={puddle:1,branch:1};
 const REASON={granny:'おばあちゃんにぶつかっちゃった！',kid:'はしゃいでる子どもとぶつかった！',car:'止まっている車にゴツン！',puddle:'水たまりにバシャーン！',jogger:'ジョギングの人とぶつかった！',dog:'大きな犬に吠えられてびっくり！',ducks:'アヒルの親子の行進をじゃましちゃった！',branch:'落ちていた枝につまずいちゃった！',cone:'赤いコーンにぶつかった！',mud:'泥んこの水たまりにはまっちゃった！',sign:'通行止めの看板にぶつかった！',truck:'止まっているトラックにゴツン！'};
 const SINGLE=['granny','puddle','jogger','dog','sign','truck','branch'];
 
@@ -317,7 +317,24 @@ function loadScores(){try{const a=JSON.parse(store.get('komachi_scores')||'null'
 function saveScores(a){mem=a;store.set('komachi_scores',JSON.stringify(a))}
 function esc(s){return s.replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
 let lastEntry=Number(store.get('komachi_last'))||null;
-function renderBoard(){const a=loadScores(),el=$('board');
+const FBK='AIzaSyDMe0i0sNcbNx4fu4rTre7AEUTf2Lc9lXs',FBP='puripurisanpo',FBD=`projects/${FBP}/databases/(default)/documents`,FBB='https://firestore.googleapis.com/v1/'+FBD;
+let gTop=null,gLast=null;try{gLast=JSON.parse(store.get('komachi_glast')||'null')}catch(e){}
+async function fb(path,body){const ac=new AbortController(),tm=setTimeout(()=>ac.abort(),7000);try{const r=await fetch(FBB+path+'?key='+FBK,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body),signal:ac.signal});if(!r.ok)throw new Error('HTTP '+r.status);return await r.json()}finally{clearTimeout(tm)}}
+async function fbTop(){const res=await fb(':runQuery',{structuredQuery:{from:[{collectionId:'scores'}],orderBy:[{field:{fieldPath:'score'},direction:'DESCENDING'}],limit:5}});
+return res.filter(x=>x.document).map(x=>{const f=x.document.fields||{};return{id:x.document.name.split('/').pop(),name:(f.name&&f.name.stringValue)||'？',score:Number((f.score&&f.score.integerValue)||0)}})}
+async function fbRank(sc){const res=await fb(':runAggregationQuery',{structuredAggregationQuery:{structuredQuery:{from:[{collectionId:'scores'}],where:{fieldFilter:{field:{fieldPath:'score'},op:'GREATER_THAN',value:{integerValue:String(sc)}}}},aggregations:[{alias:'c',count:{}}]}});
+const r0=res.find(x=>x.result);return Number(r0.result.aggregateFields.c.integerValue||0)+1}
+async function fbSubmit(name,sc){const id=Array.from(crypto.getRandomValues(new Uint8Array(15)),b=>'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'[b%62]).join('');
+await fb(':commit',{writes:[{update:{name:`${FBD}/scores/${id}`,fields:{name:{stringValue:name},score:{integerValue:String(sc)}}},updateTransforms:[{fieldPath:'t',setToServerValue:'REQUEST_TIME'}],currentDocument:{exists:false}}]});return id}
+async function refreshOnline(){try{const top=await fbTop();gTop=top;if(gLast)gLast.rank=await fbRank(gLast.score);if(state==='home')renderBoard()}catch(e){gTop=null}}
+function renderBoard(){if(gTop){$('boardTitle').textContent='みんなのランキング';const el=$('board');
+if(!gTop.length){el.innerHTML='<li class="empty" style="display:block;border:0">まだ記録がありません。<br>最初の記録をつくろう！</li>';return}
+const row=(s,i,me)=>`<li class="${me?'me':''}"><span class="rk">${i}</span><span class="nm">${esc(s.name)}</span><span class="sc"><img class="bone" src="${boneURL}" alt="">${s.score}</span></li>`;
+let h=gTop.map((s,i)=>row(s,i+1,gLast&&s.id===gLast.id)).join('');
+if(gLast&&gLast.rank&&!gTop.some(s=>gLast.id&&s.id===gLast.id))h+=`<li class="gap" style="justify-content:center;color:#8a7a6a;border:0;padding:0">・・・</li>`+row(gLast,gLast.rank,true);
+el.innerHTML=h;return}
+$('boardTitle').textContent='スコアボード（この端末）';
+const a=loadScores(),el=$('board');
 if(!a.length){el.innerHTML='<li class="empty" style="display:block;border:0">まだ記録がありません。<br>最初の記録をつくろう！</li>';return}
 const row=(s,i)=>`<li class="${lastEntry&&s.t===lastEntry?'me':''}"><span class="rk">${i+1}</span><span class="nm">${esc(s.name)}</span><span class="sc"><img class="bone" src="${boneURL}" alt="">${s.score}</span></li>`;
 let h=a.slice(0,5).map(row).join('');const li=lastEntry?a.findIndex(s=>s.t===lastEntry):-1;
@@ -325,7 +342,7 @@ if(li>=5)h+=`<li class="gap" style="justify-content:center;color:#8a7a6a;border:
 el.innerHTML=h}
 
 function resetWorld(){obs=[];pops=[];hearts=[];lookT=0;cam=0;lane=1;dogX=VX;jumpT=-1;jh=0;flash=0}
-function goHome(){musicStart();state='home';paused=false;resetWorld();renderBoard();$('whoName').textContent='プレイヤー：'+playerName;show('homeScreen');setTimeout(()=>$('startBtn').focus(),0)}
+function goHome(){musicStart();state='home';paused=false;resetWorld();renderBoard();refreshOnline();$('whoName').textContent='プレイヤー：'+playerName;show('homeScreen');setTimeout(()=>$('startBtn').focus(),0)}
 function goName(){state='name';$('nameInput').value=playerName;$('nameErr').textContent='';show('nameScreen');setTimeout(()=>$('nameInput').focus(),50)}
 function startGame(){auInit();musicStop();sfx('start');setTimeout(musicStart,350);resetWorld();state='play';paused=false;elapsed=0;speed=3;score=0;next=cam+VIEW;overDone=false;$('score').textContent='0';show('hud');
 const tip=$('tip');$('tipA').style.display='block';$('tipB').style.display='none';tip.style.opacity=1;clearTimeout(tip._t);clearTimeout(tip._t2);clearTimeout(tip._t3);tip._t=setTimeout(()=>tip.style.opacity=0,3000);tip._t2=setTimeout(()=>{$('tipA').style.display='none';$('tipB').style.display='flex';tip.style.opacity=1},3600);tip._t3=setTimeout(()=>tip.style.opacity=0,6400);app.focus()}
@@ -335,7 +352,11 @@ function finishGame(){overDone=true;state='over';
 const a=loadScores().slice(),entry={name:playerName,score,t:Date.now()};a.push(entry);a.sort((x,y)=>y.score-x.score||x.t-y.t);
 const rank=a.indexOf(entry)+1;saveScores(a.slice(0,500));lastEntry=entry.t;store.set('komachi_last',String(entry.t));
 $('final').textContent=score;sfx(score>0&&rank===1?'best':'over');
-$('badge').textContent=score>0&&rank===1?'ベスト記録！':(rank<=5&&score>0?rank+'位にランクイン！':'今回は'+rank+'位');
+const localBadge=score>0&&rank===1?'ベスト記録！':(rank<=5&&score>0?rank+'位にランクイン！':'今回は'+rank+'位');$('badge').textContent='記録を送信中…';
+const myScore=score,myName=playerName;(async()=>{try{let id=null;if(myScore>0)id=await fbSubmit(myName,myScore);const gr=await fbRank(myScore);
+gLast={id,name:myName,score:myScore,rank:gr};store.set('komachi_glast',JSON.stringify(gLast));
+if(state==='over')$('badge').textContent=myScore>0&&gr===1?'みんなの中で1位！':(gr<=5&&myScore>0?'みんなの中で'+gr+'位にランクイン！':'みんなの中で今回は'+gr+'位')}
+catch(e){if(state==='over')$('badge').textContent=localBadge}})();
 show('overScreen');setTimeout(()=>$('retryBtn').focus(),0)}
 
 function move(d){if(state==='play'&&!paused){const n=Math.max(0,Math.min(2,lane+d));if(n!==lane){lane=n;sfx('move')}}}
